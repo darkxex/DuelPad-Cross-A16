@@ -543,6 +543,7 @@ std::string setProfileOptions()
     DynamicJsonDocument doc = get_post_data();
 
     ProfileOptions& profileOptions = Storage::getInstance().getProfileOptions();
+    GpioMappings& coreMappings = Storage::getInstance().getGpioMappings();
     JsonObject options = doc.as<JsonObject>();
     JsonArray alts = options["alternativePinMappings"];
     int altsIndex = 0;
@@ -551,6 +552,7 @@ std::string setProfileOptions()
         for (Pin_t pin = 0; pin < (Pin_t)NUM_BANK0_GPIOS; pin++) {
             snprintf(pinName, 6, "pin%0*d", 2, pin);
             // setting a pin shouldn't change a new existing addon/reserved pin
+            // but if the profile definition is new, we should still capture the addon/reserved state
             if (profileOptions.gpioMappingsSets[altsIndex].pins[pin].action != GpioAction::ASSIGNED_TO_ADDON &&
                     profileOptions.gpioMappingsSets[altsIndex].pins[pin].action != GpioAction::RESERVED &&
                     (GpioAction)alt[pinName]["action"] != GpioAction::RESERVED &&
@@ -558,11 +560,19 @@ std::string setProfileOptions()
                 profileOptions.gpioMappingsSets[altsIndex].pins[pin].action = (GpioAction)alt[pinName]["action"];
                 profileOptions.gpioMappingsSets[altsIndex].pins[pin].customButtonMask = (uint32_t)alt[pinName]["customButtonMask"];
                 profileOptions.gpioMappingsSets[altsIndex].pins[pin].customDpadMask = (uint32_t)alt[pinName]["customDpadMask"];
+            } else if ((coreMappings.pins[pin].action == GpioAction::RESERVED &&
+                        (GpioAction)alt[pinName]["action"] == GpioAction::RESERVED) ||
+                    (coreMappings.pins[pin].action == GpioAction::ASSIGNED_TO_ADDON &&
+                        (GpioAction)alt[pinName]["action"] == GpioAction::ASSIGNED_TO_ADDON)) {
+                profileOptions.gpioMappingsSets[altsIndex].pins[pin].action = (GpioAction)alt[pinName]["action"];
             }
         }
+        profileOptions.gpioMappingsSets[altsIndex].pins_count = NUM_BANK0_GPIOS;
+
         size_t profileLabelSize = sizeof(profileOptions.gpioMappingsSets[altsIndex].profileLabel);
         strncpy(profileOptions.gpioMappingsSets[altsIndex].profileLabel, alt["profileLabel"], profileLabelSize - 1);
         profileOptions.gpioMappingsSets[altsIndex].profileLabel[profileLabelSize - 1] = '\0';
+        profileOptions.gpioMappingsSets[altsIndex].enabled = alt["enabled"];
 
         profileOptions.gpioMappingsSets_count = ++altsIndex;
         if (altsIndex > 2) break;
@@ -584,6 +594,12 @@ std::string getProfileOptions()
     };
 
     ProfileOptions& profileOptions = Storage::getInstance().getProfileOptions();
+
+    // return an empty list if no profiles are currently set, since we no longer populate by default
+    if (profileOptions.gpioMappingsSets_count == 0) {
+        doc.createNestedArray("alternativePinMappings");
+    }
+
     for (int i = 0; i < profileOptions.gpioMappingsSets_count; i++) {
         // this looks duplicative, but something in arduinojson treats the doc
         // field string by reference so you can't be "clever" and do an snprintf
@@ -619,6 +635,7 @@ std::string getProfileOptions()
         writePinDoc(i, "pin28", profileOptions.gpioMappingsSets[i].pins[28]);
         writePinDoc(i, "pin29", profileOptions.gpioMappingsSets[i].pins[29]);
         writeDoc(doc, "alternativePinMappings", i, "profileLabel", profileOptions.gpioMappingsSets[i].profileLabel);
+        doc["alternativePinMappings"][i]["enabled"] = profileOptions.gpioMappingsSets[i].enabled;
     }
 
     return serialize_json(doc);
@@ -1062,6 +1079,7 @@ std::string setPinMappings()
     size_t profileLabelSize = sizeof(gpioMappings.profileLabel);
     strncpy(gpioMappings.profileLabel, doc["profileLabel"], profileLabelSize - 1);
     gpioMappings.profileLabel[profileLabelSize - 1] = '\0';
+    gpioMappings.enabled = doc["enabled"];
 
     Storage::getInstance().save();
 
@@ -1113,6 +1131,7 @@ std::string getPinMappings()
     writePinDoc("pin29", gpioMappings.pins[29]);
 
     writeDoc(doc, "profileLabel", gpioMappings.profileLabel);
+    doc["enabled"] = gpioMappings.enabled;
 
     return serialize_json(doc);
 }
@@ -1492,10 +1511,6 @@ std::string setAddonOptions()
 
     AnalogADS1219Options& analogADS1219Options = Storage::getInstance().getAddonOptions().analogADS1219Options;
     docToValue(analogADS1219Options.enabled, doc, "I2CAnalog1219InputEnabled");
-
-    SliderOptions& sliderOptions = Storage::getInstance().getAddonOptions().sliderOptions;
-    docToValue(sliderOptions.modeDefault, doc, "sliderModeZero");
-    docToValue(sliderOptions.enabled, doc, "JSliderInputEnabled");
 
     PlayerNumberOptions& playerNumberOptions = Storage::getInstance().getAddonOptions().playerNumberOptions;
     docToValue(playerNumberOptions.number, doc, "playerNumber");
@@ -1917,10 +1932,6 @@ std::string getAddonOptions()
 
     const AnalogADS1219Options& analogADS1219Options = Storage::getInstance().getAddonOptions().analogADS1219Options;
     writeDoc(doc, "I2CAnalog1219InputEnabled", analogADS1219Options.enabled);
-
-    const SliderOptions& sliderOptions = Storage::getInstance().getAddonOptions().sliderOptions;
-    writeDoc(doc, "sliderModeZero", sliderOptions.modeDefault);
-    writeDoc(doc, "JSliderInputEnabled", sliderOptions.enabled);
 
     const PlayerNumberOptions& playerNumberOptions = Storage::getInstance().getAddonOptions().playerNumberOptions;
     writeDoc(doc, "playerNumber", playerNumberOptions.number);
